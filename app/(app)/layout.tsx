@@ -1,5 +1,5 @@
-import { Sidebar } from "@/components/Sidebar";
 import { HStack } from "@astryxdesign/core/Layout";
+import { Sidebar } from "@/components/Sidebar";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (

@@ -1,9 +1,8 @@
 import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Theme } from "@astryxdesign/core";
-import { neutralTheme } from "@astryxdesign/theme-neutral/built";
 import { Geist, Geist_Mono } from "next/font/google";
-import "@astryxdesign/theme-neutral/theme.css";
+import { appTheme, appThemeMode } from "@/lib/theme";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -33,7 +32,7 @@ export default function RootLayout({
         style={{ height: "100%", margin: 0 }}
       >
         <ClerkProvider>
-          <Theme theme={neutralTheme} mode="light">
+          <Theme theme={appTheme} mode={appThemeMode}>
             {children}
           </Theme>
         </ClerkProvider>
