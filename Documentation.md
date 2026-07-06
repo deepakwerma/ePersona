@@ -1,6 +1,6 @@
 # e Persona — Documentation
 
-This document explains how the two AI personas were built: how their data was sourced, how the prompts were engineered and iterated on, how conversation context is managed, and sample conversations demonstrating the result.
+This document explains how the two AI personas were built: how their data was sourced, how the prompts were engineered and iterated on, how conversation context and cost are managed, how the live video-search tool works, and sample conversations demonstrating the result.
 
 ---
 
@@ -57,30 +57,42 @@ Both personas use a layered system prompt with the same underlying structure, so
 
 **Problem: over-formatted output.** Responses started using markdown headers and heavily bolded text that read like a document rather than a person typing a chat reply. Fix: a formatting rule that defaults to plain conversational paragraphs, with light structure (a short list, a few bolded key terms) allowed only for genuinely multi-part practical advice — never for casual or short replies.
 
+**Problem: occasional empty replies.** Under the combined weight of the persona's many constraints (voice, length, formatting, tool-use), the model would sometimes return an empty response, particularly on short casual messages. Fix: a one-time automatic retry when the model's final answer comes back empty, with a graceful in-character fallback line only if both attempts fail — this is implemented in `lib/ai.ts`, not the prompt itself.
+
 ---
 
 ## 3. Context Management Approach
 
 ### Conversation memory
 
-Chat history is held in client-side React state as an array of `{ role, content }` messages. On every new user message, the full running history for that session is sent to the backend, which prepends the current persona's system prompt and forwards the complete message list to the LLM. This gives the model full context of the conversation so far within a session.
+Chat history is held in client-side React state as an array of `{ role, content }` messages, and persisted server-side in a Postgres (Neon) `messages` table keyed by `user_id` and `persona`. On every new user message, the full running history for that persona's thread is sent to the backend, which prepends the current persona's system prompt and forwards the complete message list to the LLM. After a reply is generated, both the user's message and the assistant's reply are saved to the database, so the conversation survives page refreshes and server restarts.
 
 ### Persona switching
 
-Switching personas mid-conversation swaps which system prompt is prepended to the next API call — the conversation history itself is preserved rather than cleared, so the user doesn't lose their chat when switching.
+Persona switching is intentionally simple: switching from Hitesh to Piyush (or back) loads that persona's own saved thread from the database via a dedicated `/api/history` endpoint, rather than continuing one merged conversation across both personas. This was a deliberate choice over a more complex approach (inserting a hidden marker message into a shared history to signal a persona change mid-conversation) — the simpler per-persona-thread model is more reliable and easier to reason about, at the cost of not supporting a single continuous conversation that spans both personas. Each persona's thread is independently coherent and persists correctly across sessions.
 
-**Current limitation:** the switch does not yet insert an explicit marker into the message history signaling the change. In some cases the model may still lean on the tone of its own earlier replies (written as the previous persona) rather than fully committing to the newly selected persona's system prompt. The planned fix is to insert a hidden, non-rendered marker message into history at the moment of switching, explicitly instructing the model that all following replies are from the newly selected persona and that earlier assistant turns in the visible history should be treated as reference context only, not as its own established voice.
+### Live tool-calling: YouTube video search
+
+Beyond static conversation memory, each persona can call a real external tool mid-conversation: a YouTube Data API search scoped to that persona's own channel(s). This uses the LLM provider's native function-calling support rather than a hand-rolled JSON-parsing protocol:
+
+1. A `search_creator_videos` tool is defined with a JSON Schema description (topic, and an optional `maxResults`, defaulting to 2 for a normal suggestion) and offered to the model alongside every request.
+2. If the model decides a real video reference would strengthen its answer, it returns a structured tool-call request instead of a final answer.
+3. The backend runs the actual YouTube API search (scoped to the persona's channel IDs), returns the results back to the model as a `tool` role message.
+4. The model then produces its final, in-character reply, instructed to format any referenced video as a proper markdown link (`[title](url)`) rather than plain text — this renders as a distinctly styled, clickable link in the UI, not just visually-identical text.
+
+This loop is capped at 4 round-trips per user message as a cost-safety measure, preventing runaway API spend if the model were to get stuck repeatedly requesting tools.
+
+A second tool — suggesting each persona's paid courses/cohorts from a static local catalog — was designed (schema, matching logic, and integration point all scoped) but not implemented before submission. See README's Known Limitations.
 
 ### Session and cost-safety context
 
-Since this project runs on a small, fixed API budget, context management includes usage safeguards in addition to conversation memory:
+Since this project runs on a small, fixed API budget, context management includes usage safeguards in addition to conversation memory, all backed by the database rather than in-memory state (an earlier in-memory version was found to reset unreliably across serverless cold starts, prompting the migration to Neon):
 
-- **Lifetime message quota** — tracked per Clerk `userId`, shared across both personas (switching personas does not reset or duplicate quota)
+- **Lifetime message quota** — tracked per Clerk `userId` in the `usage_tracking` table, shared across both personas (switching personas does not reset or duplicate quota)
 - **Rate limiting** — a timestamp check per user rejects requests sent faster than roughly 3 seconds apart, preventing rapid-fire spam
-- **Budget circuit breaker** — actual token usage returned by the DeepSeek API on each response is summed into a running cost estimate; once this crosses a set threshold of the total budget, the chat endpoint disables itself and returns a clear "temporarily paused" message rather than failing unpredictably mid-response
+- **Budget circuit breaker** — actual token usage returned by the LLM provider on each response is summed into a running cost total in the `global_spend` table; once this crosses a set threshold of the total budget, the chat endpoint disables itself and returns a clear "temporarily paused" message rather than failing unpredictably mid-response
 - **Input/output length caps** — user message length is capped, and the model's `max_tokens` is capped on generation, keeping worst-case cost per exchange bounded
-
-All of this state is currently held in server memory rather than a database — sufficient for the scale of this assignment, with a persistent store noted as a future improvement in the README.
+- **Tool-call round cap** — bounds worst-case cost per message even when the model is actively using tools, not just during plain conversation
 
 ---
 
@@ -97,6 +109,12 @@ All of this state is currently held in server memory rather than a database — 
 **User:** sir aaj apne chai pia h
 
 **Hitesh:** Arre bhai, aaj thoda late liya, lunch mein butter naan ke saath thali thi. Shaam ko chai ke saath coding hi hogi.
+
+---
+
+**User:** any video on closures?
+
+**Hitesh:** _(model calls the video search tool, then replies)_ Bilkul, [Lexical scoping and Closure | chai aur #javascript](https://youtube.com/watch?v=VaH09NXQZ58) — ismein seedhe seedhe samjha diya hai scope aur closure ka connection. Dekh lo, phir practice karo.
 
 ---
 
