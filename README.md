@@ -3,6 +3,7 @@
 An AI-powered chat application that lets you have conversations with AI-simulated versions of **Hitesh Choudhary** and **Piyush Garg** — two well-known tech educators in the Indian developer community. Built for the GenAI with JS cohort assignment.
 
 **Live demo:** [epersona.deepakverma.dev](https://epersona.deepakverma.dev)
+
 **Repository:** [github.com/deepakwerma/ePersona](https://github.com/deepakwerma/ePersona)
 
 ---
